@@ -19,6 +19,8 @@ import android.os.Build
  */
 internal object WorkspaceShortcutManager {
 
+    private const val PREFS = "appdual_shortcuts"
+
     fun isSupported(context: Context): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
         return context.getSystemService(ShortcutManager::class.java)
@@ -36,6 +38,13 @@ internal object WorkspaceShortcutManager {
         if (!manager.isRequestPinShortcutSupported) return false
 
         val id = "appdual:u${workspace.userId}:${item.packageName}"
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val tokenKey = "token:$id"
+        val token = prefs.getString(tokenKey, null)
+            ?: java.util.UUID.randomUUID().toString().also {
+                prefs.edit().putString(tokenKey, it).apply()
+            }
+
         val intent = Intent(context, ShortcutProxyActivity::class.java).apply {
             action = ShortcutProxyActivity.ACTION_LAUNCH
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
@@ -44,6 +53,8 @@ internal object WorkspaceShortcutManager {
             putExtra(ShortcutProxyActivity.EXTRA_COMPONENT, component)
             putExtra(ShortcutProxyActivity.EXTRA_APP_LABEL, item.label)
             putExtra(ShortcutProxyActivity.EXTRA_USER_LABEL, workspace.displayName)
+            putExtra(ShortcutProxyActivity.EXTRA_SHORTCUT_ID, id)
+            putExtra(ShortcutProxyActivity.EXTRA_TOKEN, token)
         }
 
         val builder = ShortcutInfo.Builder(context, id)
