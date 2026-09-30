@@ -23,7 +23,10 @@ class ShortcutProxyActivity : AppCompatActivity() {
         const val EXTRA_COMPONENT = "target_component"
         const val EXTRA_APP_LABEL = "target_app_label"
         const val EXTRA_USER_LABEL = "target_user_label"
+        const val EXTRA_SHORTCUT_ID = "shortcut_id"
+        const val EXTRA_TOKEN = "shortcut_token"
         private const val REQUEST_SHIZUKU = 9042
+        private const val PREFS = "appdual_shortcuts"
     }
 
     private var shell: ShellClient? = null
@@ -70,11 +73,29 @@ class ShortcutProxyActivity : AppCompatActivity() {
         if (commandInFlight) return
 
         val userId = intent.getIntExtra(EXTRA_USER_ID, -1)
+        val packageName = intent.getStringExtra(EXTRA_PACKAGE).orEmpty()
         val component = intent.getStringExtra(EXTRA_COMPONENT).orEmpty()
         val appLabel = intent.getStringExtra(EXTRA_APP_LABEL).orEmpty()
         val userLabel = intent.getStringExtra(EXTRA_USER_LABEL).orEmpty()
+        val shortcutId = intent.getStringExtra(EXTRA_SHORTCUT_ID).orEmpty()
+        val suppliedToken = intent.getStringExtra(EXTRA_TOKEN).orEmpty()
 
-        if (userId <= 0 || component.isBlank()) {
+        val packagePattern = Regex("""^[A-Za-z0-9_.$-]+$""")
+        val componentPattern = Regex("""^[A-Za-z0-9_.$-]+/[A-Za-z0-9_.$-]+$""")
+        val storedToken = getSharedPreferences(PREFS, MODE_PRIVATE)
+            .getString("token:$shortcutId", null)
+
+        val valid = userId > 0 &&
+            packagePattern.matches(packageName) &&
+            componentPattern.matches(component) &&
+            component.substringBefore('/') == packageName &&
+            shortcutId == "appdual:u$userId:$packageName" &&
+            suppliedToken.isNotEmpty() &&
+            suppliedToken == storedToken
+
+        if (!valid) {
+            // This Activity must be exported so the launcher can invoke a pinned shortcut.
+            // Reject anything that wasn't minted by AppDual itself before touching shell.
             finish()
             return
         }
