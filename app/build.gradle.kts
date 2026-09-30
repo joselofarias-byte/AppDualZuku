@@ -50,6 +50,12 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Physical-test APK must coexist with the installed AppDual v1.5 even
+            // when that build uses a different signing key.
+            applicationIdSuffix = ".dhizukutest"
+            versionNameSuffix = "-dhizukutest"
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
