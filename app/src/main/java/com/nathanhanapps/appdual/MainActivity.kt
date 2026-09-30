@@ -52,6 +52,10 @@ class MainActivity : AppCompatActivity() {
     private var cachedFullList:   List<AppItem>       = emptyList()
     private var cachedWorkspaces: List<WorkspaceInfo> = emptyList()
 
+    // Android assigns app UIDs as userId * 100000 + appId.
+    private val runtimeUserId: Int get() = android.os.Process.myUid() / 100000
+    private val isSecondaryRuntimeUser: Boolean get() = runtimeUserId != 0
+
     // ── Per-space filter chips ───────────────────────────────────────────────
     /** Selected workspace userIds for the space filter row. Empty = "All" (no filter). */
     private var spaceFilterUserIds: Set<Int> = emptySet()
@@ -124,6 +128,7 @@ class MainActivity : AppCompatActivity() {
         applyStatusBarToMatchToolbar()
         setupUI()
         setupAboutVersion()
+        if (isSecondaryRuntimeUser) configureSecondaryUserUi()
 
         repo = AppRepository(this)
         loadAppsUser0()
@@ -272,8 +277,12 @@ class MainActivity : AppCompatActivity() {
         val columns = resources.getInteger(R.integer.app_grid_columns)
         binding.rvApps.layoutManager = GridLayoutManager(this, columns)
         adapter = AppAdapter(
-            onItemClick = { item -> showAppActionsBottomSheet(item) },
-            onLongPress = { item -> enterBatchModeAndSelect(item) },
+            onItemClick = { item ->
+                if (isSecondaryRuntimeUser) launchLocalApp(item) else showAppActionsBottomSheet(item)
+            },
+            onLongPress = { item ->
+                if (isSecondaryRuntimeUser) launchLocalApp(item) else enterBatchModeAndSelect(item)
+            },
             onSelectionChanged = { selected -> updateBatchFab(selected) }
         )
         binding.rvApps.adapter = adapter
@@ -495,6 +504,81 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun configureSecondaryUserUi() {
+        binding.cardSecondaryUser.isVisible = true
+        binding.tvSecondaryUserTitle.text = "Dual1 · User $runtimeUserId"
+        binding.tvSecondaryUserStatus.text =
+            getString(R.string.secondary_user_status_needs_dhizuku, runtimeUserId)
+
+        // Workspace management belongs to User 0. In the managed secondary user AppDual
+        // is intentionally a lightweight local launcher and return portal.
+        binding.layoutAppListControls.isVisible = false
+        binding.fabBatchActions.isVisible = false
+        binding.bottomNav.menu.findItem(R.id.nav_settings).isVisible = false
+
+        binding.btnReturnPrimary.setOnClickListener { returnToPrimaryUser() }
+    }
+
+    private fun launchLocalApp(item: AppItem) {
+        val intent = packageManager.getLaunchIntentForPackage(item.packageName)
+        if (intent == null) {
+            Toast.makeText(
+                this,
+                getString(R.string.local_launch_failed, item.label),
+                Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
+
+        runCatching { startActivity(intent) }
+            .onFailure {
+                Toast.makeText(
+                    this,
+                    getString(R.string.local_launch_failed, item.label),
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+    }
+
+    private fun returnToPrimaryUser() {
+        fun logoutNow() {
+            Toast.makeText(this, R.string.returning_primary, Toast.LENGTH_SHORT).show()
+            runBg {
+                val affiliation = dhizukuBridge.ensureAffiliation()
+                val result = if (affiliation.success) {
+                    dhizukuBridge.logoutSecondaryUser()
+                } else {
+                    affiliation
+                }
+                if (!result.success) {
+                    runOnUiThread {
+                        Toast.makeText(
+                            this,
+                            getString(R.string.failed_generic, result.message),
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            }
+        }
+
+        if (!dhizukuBridge.init()) {
+            Toast.makeText(this, "Dhizuku unavailable", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        if (dhizukuBridge.isPermissionGranted()) {
+            logoutNow()
+        } else {
+            dhizukuBridge.requestPermission { granted, message ->
+                runOnUiThread {
+                    if (granted) logoutNow()
+                    else Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
     private fun showAppList() {
         binding.layoutAppList.isVisible = true
         binding.layoutSettings.isVisible = false
@@ -618,10 +702,56 @@ class MainActivity : AppCompatActivity() {
     // ════════════════════════════════════════════════════════════════════════
 
     private fun initializeExecution() {
+        if (isSecondaryRuntimeUser) {
+            initializeSecondaryUserMode()
+            return
+        }
+
         if (Prefs.useRoot(this)) {
             initRootShellAndUpdate()
         } else {
             checkShizukuAndInitialize()
+        }
+    }
+
+    private fun initializeSecondaryUserMode() {
+        // A full secondary user has its own app data and launcher context. AppDual does
+        // not need shell access merely to list and launch apps in that same user.
+        if (!dhizukuBridge.init()) {
+            binding.tvSecondaryUserStatus.text =
+                "Dual user $runtimeUserId · Dhizuku unavailable"
+            return
+        }
+
+        if (dhizukuBridge.isPermissionGranted()) {
+            completeSecondaryUserDhizukuSetup()
+            return
+        }
+
+        binding.tvSecondaryUserStatus.text =
+            getString(R.string.secondary_user_status_needs_dhizuku, runtimeUserId)
+        dhizukuBridge.requestPermission { granted, message ->
+            runOnUiThread {
+                if (granted) {
+                    completeSecondaryUserDhizukuSetup()
+                } else {
+                    binding.tvSecondaryUserStatus.text =
+                        "Dual user $runtimeUserId · $message"
+                }
+            }
+        }
+    }
+
+    private fun completeSecondaryUserDhizukuSetup() {
+        runBg {
+            val result = dhizukuBridge.ensureAffiliation()
+            runOnUiThread {
+                binding.tvSecondaryUserStatus.text = if (result.success) {
+                    getString(R.string.secondary_user_status_affiliated, runtimeUserId)
+                } else {
+                    "Dual user $runtimeUserId · ${result.message}"
+                }
+            }
         }
     }
 
