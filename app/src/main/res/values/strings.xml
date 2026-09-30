@@ -164,4 +164,24 @@
     <string name="return_primary">Return</string>
     <string name="returning_primary">Returning to José Luis…</string>
     <string name="local_launch_failed">Could not open %1$s in this user</string>
+
+    <string name="switch_user">Switch</string>
+    <string name="switch_user_title">Switch Android user</string>
+    <string name="switch_user_message">The whole phone will switch to %1$s (User %2$d). Apps and data stay isolated from the main user.</string>
+    <string name="switch_user_unsupported">This space is a profile, not a full Android user, so it cannot become the foreground user.</string>
+    <string name="switching_user">Switching to %1$s…</string>
+    <string name="export_apps">Export apps</string>
+    <string name="import_apps">Import apps</string>
+    <string name="export_user_apps_title">Export apps from %1$s</string>
+    <string name="export_user_apps_done">Exported %1$d user apps from %2$s</string>
+    <string name="import_user_apps_title">Import apps into %1$s</string>
+    <string name="import_user_apps_confirm">Install the %1$d packages from this list into %2$s? Existing apps are left untouched.</string>
+    <string name="import_user_apps_working">Importing apps into %1$s…</string>
+    <string name="import_user_apps_done">Import complete: %1$d installed, %2$d already present, %3$d failed.</string>
+    <string name="pin">Pin</string>
+    <string name="pin_shortcut_requested">Shortcut requested for %1$s in %2$s.</string>
+    <string name="pin_shortcut_unsupported">This launcher does not support pinned shortcuts.</string>
+    <string name="pin_shortcut_failed">Could not create shortcut: %1$s</string>
+    <string name="shortcut_opening">Opening %1$s in %2$s…</string>
+    <string name="shortcut_shizuku_required">Shizuku access is required to switch Android users from this shortcut.</string>
 </resources>
