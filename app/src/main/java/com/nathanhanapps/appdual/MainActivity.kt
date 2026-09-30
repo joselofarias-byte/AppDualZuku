@@ -1182,7 +1182,14 @@ class MainActivity : AppCompatActivity() {
             // Keep AppDual itself present in the managed full user so the local launcher
             // and Return button are available there. install-existing is idempotent.
             wsRepo.installToWorkspace(ws.userId, packageName) { _, _ ->
-                wsRepo.switchUser(ws.userId) { success, output ->
+                val portalComponent = android.content.ComponentName(
+                    this,
+                    MainActivity::class.java
+                ).flattenToShortString()
+
+                // Land directly in the secondary-user AppDual portal rather than leaving
+                // the user at an arbitrary previous task/home screen.
+                wsRepo.switchAndLaunch(ws.userId, portalComponent) { success, output ->
                     if (!success) {
                         runOnUiThread {
                             Toast.makeText(
