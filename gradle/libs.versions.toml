@@ -11,7 +11,7 @@ activity = "1.13.0"
 constraintlayout = "2.2.1"
 shizuku = "13.1.5"
 shimmer = "0.5.0"
-dhizukuApi = "2.6.0"
+dhizukuApi = "2.5.4"
 hiddenApiBypass = "6.1"
 
 [libraries]
