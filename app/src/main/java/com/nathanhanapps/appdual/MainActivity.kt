@@ -1178,25 +1178,29 @@ class MainActivity : AppCompatActivity() {
             Toast.LENGTH_SHORT
         ).show()
 
-        fun switchNow() {
-            wsRepo.switchUser(ws.userId) { success, output ->
-                if (!success) {
-                    runOnUiThread {
-                        Toast.makeText(
-                            this,
-                            getString(R.string.failed_generic, output),
-                            Toast.LENGTH_LONG
-                        ).show()
+        fun installPortalAndSwitch() {
+            // Keep AppDual itself present in the managed full user so the local launcher
+            // and Return button are available there. install-existing is idempotent.
+            wsRepo.installToWorkspace(ws.userId, packageName) { _, _ ->
+                wsRepo.switchUser(ws.userId) { success, output ->
+                    if (!success) {
+                        runOnUiThread {
+                            Toast.makeText(
+                                this,
+                                getString(R.string.failed_generic, output),
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
                     }
                 }
             }
         }
 
         if (ws.isRunning) {
-            switchNow()
+            installPortalAndSwitch()
         } else {
             wsRepo.startWorkspace(ws.userId) { success, output ->
-                if (success) switchNow()
+                if (success) installPortalAndSwitch()
                 else runOnUiThread {
                     Toast.makeText(
                         this,
