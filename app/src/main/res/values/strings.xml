@@ -156,4 +156,12 @@
     <string name="batch_cloning">Cloning…</string>
     <string name="batch_clone_preparing">Reading current workspace app lists…</string>
     <string name="batch_clone_summary">Installed %1$d, uninstalled %2$d, skipped %3$d</string>
+
+    <string name="secondary_user_title">Dual user</string>
+    <string name="secondary_user_status">Independent app data in this Android user</string>
+    <string name="secondary_user_status_affiliated">Dual user %1$d · Dhizuku affiliated</string>
+    <string name="secondary_user_status_needs_dhizuku">Dual user %1$d · authorize AppDual in Dhizuku</string>
+    <string name="return_primary">Return</string>
+    <string name="returning_primary">Returning to José Luis…</string>
+    <string name="local_launch_failed">Could not open %1$s in this user</string>
 </resources>
