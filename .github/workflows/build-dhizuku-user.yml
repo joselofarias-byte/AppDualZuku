@@ -1,0 +1,40 @@
+name: Build Dhizuku managed-user test APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - chatgpt/dhizuku-managed-user-20260930
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: Restore stable physical-test signing key
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: appdual-dhizukutest2-debug-keystore-v1
+
+      - name: Build debug APK
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --stacktrace
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: AppDual-Dhizuku-managed-user-v2-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

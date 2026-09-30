@@ -21,9 +21,12 @@
     <string name="workspaces_notice"><b>Managed:</b> Traditional work profiles (isolated settings/store/storage/etc.). \n<b>Cloned:</b> Lightweight profiles optimized for Dual Apps (Shared, May not work in some devices).</string>
     <string name="create_workspace">Managed</string>
     <string name="create_clone_workspace">Cloned</string>
+    <string name="create_dhizuku_user">Dhizuku User</string>
+    <string name="create_dhizuku_user_hint">Keeps Dhizuku as Device Owner and creates a full managed secondary user through DevicePolicyManager.</string>
     <string name="refresh">Refresh</string>
     <string name="create_workspace_dialog_title">New Managed Workspace</string>
     <string name="create_clone_workspace_dialog_title">New Cloned Workspace</string>
+    <string name="create_dhizuku_user_dialog_title">New Dhizuku Managed User</string>
     <string name="workspace_name_hint">Workspace name</string>
     <string name="create">Create</string>
     <string name="workspace_name_empty_error">Name can\'t be empty</string>
@@ -99,6 +102,8 @@
     <string name="error_loading_apps">Error loading apps: %1$s</string>
     <string name="creating_workspace_toast">Creating workspace \"%1$s\"…</string>
     <string name="workspace_created_toast">Workspace \"%1$s\" created (User %2$d)</string>
+    <string name="dhizuku_user_created_toast">Dhizuku managed user \"%1$s\" created (User %2$d)</string>
+    <string name="dhizuku_permission_required">Grant AppDual access in Dhizuku to create the managed user.</string>
     <string name="failed_to_create_workspace">Failed to create workspace: %1$s</string>
     <string name="removing_workspace_toast">Removing workspace \"%1$s\"…</string>
     <string name="workspace_removed_toast">Workspace removed</string>
@@ -151,4 +156,32 @@
     <string name="batch_cloning">Cloning…</string>
     <string name="batch_clone_preparing">Reading current workspace app lists…</string>
     <string name="batch_clone_summary">Installed %1$d, uninstalled %2$d, skipped %3$d</string>
+
+    <string name="secondary_user_title">Dual user</string>
+    <string name="secondary_user_status">Independent app data in this Android user</string>
+    <string name="secondary_user_status_affiliated">Dual user %1$d · Dhizuku affiliated</string>
+    <string name="secondary_user_status_needs_dhizuku">Dual user %1$d · authorize AppDual in Dhizuku</string>
+    <string name="return_primary">Return</string>
+    <string name="returning_primary">Returning to José Luis…</string>
+    <string name="local_launch_failed">Could not open %1$s in this user</string>
+
+    <string name="switch_user">Switch</string>
+    <string name="switch_user_title">Switch Android user</string>
+    <string name="switch_user_message">The whole phone will switch to %1$s (User %2$d). Apps and data stay isolated from the main user.</string>
+    <string name="switch_user_unsupported">This space is a profile, not a full Android user, so it cannot become the foreground user.</string>
+    <string name="switching_user">Switching to %1$s…</string>
+    <string name="export_apps">Export apps</string>
+    <string name="import_apps">Import apps</string>
+    <string name="export_user_apps_title">Export apps from %1$s</string>
+    <string name="export_user_apps_done">Exported %1$d user apps from %2$s</string>
+    <string name="import_user_apps_title">Import apps into %1$s</string>
+    <string name="import_user_apps_confirm">Install the %1$d packages from this list into %2$s? Existing apps are left untouched.</string>
+    <string name="import_user_apps_working">Importing apps into %1$s…</string>
+    <string name="import_user_apps_done">Import complete: %1$d installed, %2$d already present, %3$d failed.</string>
+    <string name="pin">Pin</string>
+    <string name="pin_shortcut_requested">Shortcut requested for %1$s in %2$s.</string>
+    <string name="pin_shortcut_unsupported">This launcher does not support pinned shortcuts.</string>
+    <string name="pin_shortcut_failed">Could not create shortcut: %1$s</string>
+    <string name="shortcut_opening">Opening %1$s in %2$s…</string>
+    <string name="shortcut_shizuku_required">Shizuku access is required to switch Android users from this shortcut.</string>
 </resources>

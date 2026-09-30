@@ -2,6 +2,8 @@ package com.nathanhanapps.appdual
 
 class WorkspaceRepository(private val shell: IShellExecutor) {
 
+    private val safePackageName = Regex("""^[A-Za-z0-9_.$-]+$""")
+
     fun listWorkspaces(callback: (List<WorkspaceInfo>) -> Unit) {
         shell.execWhenReady("pm list users") { output ->
             callback(WorkspaceParsers.parseUsers(output))
@@ -54,7 +56,55 @@ class WorkspaceRepository(private val shell: IShellExecutor) {
         }
     }
 
+    /** Third-party/user-installed apps only, matching CloneCat-style user exports. */
+    fun getUserInstalledPackages(userId: Int, callback: (Set<String>) -> Unit) {
+        shell.execWhenReady("pm list packages -3 --user $userId") { output ->
+            callback(PmParsers.parsePmListPackages(output))
+        }
+    }
+
+    fun switchUser(userId: Int, callback: (Boolean, String) -> Unit) {
+        shell.execWhenReady("am switch-user $userId") { out ->
+            val ok = !out.startsWith("ERROR:", ignoreCase = true) &&
+                !out.contains("Error:", ignoreCase = true) &&
+                !out.contains("failed", ignoreCase = true)
+            callback(ok, out)
+        }
+    }
+
+    fun switchAndLaunch(userId: Int, component: String, callback: (Boolean, String) -> Unit) {
+        val cmd = "am start-user -w $userId >/dev/null 2>&1; " +
+            "am switch-user $userId >/dev/null 2>&1; sleep 1; " +
+            "am start --user $userId -n $component"
+        shell.execWhenReady(cmd) { out ->
+            val ok = !out.startsWith("ERROR:", ignoreCase = true) &&
+                !out.contains("Error:", ignoreCase = true) &&
+                !out.contains("failed", ignoreCase = true)
+            callback(ok, out)
+        }
+    }
+
+    fun resolveLauncherComponent(userId: Int, packageName: String, callback: (String?) -> Unit) {
+        if (!safePackageName.matches(packageName)) {
+            callback(null)
+            return
+        }
+        val cmd = "cmd package resolve-activity --user $userId --brief " +
+            "-a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p $packageName"
+        shell.execWhenReady(cmd) { out ->
+            // ShellClient wraps output in exitCode/stdout sections. Pick the first
+            // component-looking token and ignore diagnostic/header lines.
+            val component = Regex("""([A-Za-z0-9_.$-]+/[A-Za-z0-9_.$-]+)""")
+                .find(out)?.groupValues?.getOrNull(1)
+            callback(component)
+        }
+    }
+
     fun installToWorkspace(userId: Int, packageName: String, callback: (Boolean, String) -> Unit) {
+        if (!safePackageName.matches(packageName)) {
+            callback(false, "Invalid package name")
+            return
+        }
         shell.execWhenReady("pm install-existing --user $userId $packageName") { out ->
             val ok = out.contains("Package", ignoreCase = true) &&
                     out.contains("installed", ignoreCase = true)

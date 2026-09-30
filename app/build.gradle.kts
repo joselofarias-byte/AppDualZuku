@@ -50,6 +50,12 @@ android {
     }
 
     buildTypes {
+        debug {
+            // v2 physical-test package coexists with both AppDual v1.5 and the first
+            // one-off dhizukutest build, whose ephemeral CI debug key cannot be reused.
+            applicationIdSuffix = ".dhizukutest2"
+            versionNameSuffix = "-dhizukutest2"
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
@@ -79,4 +85,6 @@ dependencies {
     implementation(libs.shimmer)
     implementation(libs.shizuku.api)
     implementation(libs.shizuku.provider)
+    implementation(libs.dhizuku.api)
+    implementation(libs.hidden.api.bypass)
 }

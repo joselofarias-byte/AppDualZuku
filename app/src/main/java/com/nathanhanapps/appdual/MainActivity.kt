@@ -45,11 +45,16 @@ class MainActivity : AppCompatActivity() {
     private lateinit var shell:     IShellExecutor
     private lateinit var wsRepo:    WorkspaceRepository
     private lateinit var wsAdapter: WorkspaceAdapter
+    private lateinit var dhizukuBridge: DhizukuDeviceOwnerBridge
     private lateinit var binding:   ActivityMainBinding
 
     // ── State caches ─────────────────────────────────────────────────────────
     private var cachedFullList:   List<AppItem>       = emptyList()
     private var cachedWorkspaces: List<WorkspaceInfo> = emptyList()
+
+    // Android assigns app UIDs as userId * 100000 + appId.
+    private val runtimeUserId: Int get() = android.os.Process.myUid() / 100000
+    private val isSecondaryRuntimeUser: Boolean get() = runtimeUserId != 0
 
     // ── Per-space filter chips ───────────────────────────────────────────────
     /** Selected workspace userIds for the space filter row. Empty = "All" (no filter). */
@@ -70,6 +75,8 @@ class MainActivity : AppCompatActivity() {
     private var batchDialog: BottomSheetDialog? = null
     private var pendingExportJson: String? = null
     private var pendingExportCount: Int = 0
+    private var pendingExportWorkspaceLabel: String? = null
+    private var pendingWorkspaceImport: WorkspaceInfo? = null
 
     // Must be registered during construction (before onCreate), per ComponentActivity contract.
     private val exportDocumentLauncher = registerForActivityResult(
@@ -79,6 +86,14 @@ class MainActivity : AppCompatActivity() {
     private val importDocumentLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri -> uri?.let { readImportFromUri(it) } }
+
+    private val workspaceImportDocumentLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        val workspace = pendingWorkspaceImport
+        pendingWorkspaceImport = null
+        if (uri != null && workspace != null) readWorkspaceImportFromUri(uri, workspace)
+    }
 
     companion object {
         private const val REQUEST_SHIZUKU_PERMISSION = 1234
@@ -117,15 +132,40 @@ class MainActivity : AppCompatActivity() {
 
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
+        dhizukuBridge = DhizukuDeviceOwnerBridge(this)
         setContentView(binding.root)
 
         applyStatusBarToMatchToolbar()
         setupUI()
         setupAboutVersion()
+        if (isSecondaryRuntimeUser) configureSecondaryUserUi()
 
         repo = AppRepository(this)
         loadAppsUser0()
         initializeExecution()
+    }
+
+    private fun ensureDeviceOwnerAffiliation() {
+        if (!dhizukuBridge.init()) return
+
+        fun configure() {
+            runBg {
+                // Idempotent. Existing managed secondary users created by an older test
+                // build need the Device Owner side before their Profile Owner can use
+                // logoutUser()/other affiliated-user APIs.
+                dhizukuBridge.ensureAffiliation()
+            }
+        }
+
+        if (dhizukuBridge.isPermissionGranted()) {
+            configure()
+        } else {
+            // The v2 test package has a fresh application id. Ask once on first launch so
+            // the already-created Dual1 user can be affiliated without recreating it.
+            dhizukuBridge.requestPermission { granted, _ ->
+                if (granted) configure()
+            }
+        }
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
@@ -270,8 +310,12 @@ class MainActivity : AppCompatActivity() {
         val columns = resources.getInteger(R.integer.app_grid_columns)
         binding.rvApps.layoutManager = GridLayoutManager(this, columns)
         adapter = AppAdapter(
-            onItemClick = { item -> showAppActionsBottomSheet(item) },
-            onLongPress = { item -> enterBatchModeAndSelect(item) },
+            onItemClick = { item ->
+                if (isSecondaryRuntimeUser) launchLocalApp(item) else showAppActionsBottomSheet(item)
+            },
+            onLongPress = { item ->
+                if (isSecondaryRuntimeUser) launchLocalApp(item) else enterBatchModeAndSelect(item)
+            },
             onSelectionChanged = { selected -> updateBatchFab(selected) }
         )
         binding.rvApps.adapter = adapter
@@ -315,6 +359,9 @@ class MainActivity : AppCompatActivity() {
         wsAdapter = WorkspaceAdapter(
             onStart  = { ws -> doStartWorkspace(ws) },
             onStop   = { ws -> doStopWorkspace(ws) },
+            onSwitch = { ws -> confirmSwitchWorkspace(ws) },
+            onExport = { ws -> exportWorkspaceApps(ws) },
+            onImport = { ws -> beginImportWorkspaceApps(ws) },
             onRemove = { ws -> confirmRemoveWorkspace(ws) }
         )
         binding.rvWorkspaces.layoutManager = LinearLayoutManager(this)
@@ -340,6 +387,16 @@ class MainActivity : AppCompatActivity() {
         }
         binding.btnCreateCloneWorkspace.setOnLongClickListener {
             if (requireShellOrToast()) promptCreateWorkspaceName("clone")
+            true
+        }
+
+        // ── Create a full secondary user through Dhizuku Device Owner ────────
+        binding.btnCreateDhizukuUser.setOnClickListener {
+            val name = wsRepo.suggestName(cachedWorkspaces, "Dual")
+            doCreateDhizukuUser(name)
+        }
+        binding.btnCreateDhizukuUser.setOnLongClickListener {
+            promptCreateWorkspaceName("dhizuku")
             true
         }
 
@@ -483,6 +540,81 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun configureSecondaryUserUi() {
+        binding.cardSecondaryUser.isVisible = true
+        binding.tvSecondaryUserTitle.text = "Dual1 · User $runtimeUserId"
+        binding.tvSecondaryUserStatus.text =
+            getString(R.string.secondary_user_status_needs_dhizuku, runtimeUserId)
+
+        // Workspace management belongs to User 0. In the managed secondary user AppDual
+        // is intentionally a lightweight local launcher and return portal.
+        binding.layoutAppListControls.isVisible = false
+        binding.fabBatchActions.isVisible = false
+        binding.bottomNav.menu.findItem(R.id.nav_settings).isVisible = false
+
+        binding.btnReturnPrimary.setOnClickListener { returnToPrimaryUser() }
+    }
+
+    private fun launchLocalApp(item: AppItem) {
+        val intent = packageManager.getLaunchIntentForPackage(item.packageName)
+        if (intent == null) {
+            Toast.makeText(
+                this,
+                getString(R.string.local_launch_failed, item.label),
+                Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
+
+        runCatching { startActivity(intent) }
+            .onFailure {
+                Toast.makeText(
+                    this,
+                    getString(R.string.local_launch_failed, item.label),
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+    }
+
+    private fun returnToPrimaryUser() {
+        fun logoutNow() {
+            Toast.makeText(this, R.string.returning_primary, Toast.LENGTH_SHORT).show()
+            runBg {
+                val affiliation = dhizukuBridge.ensureAffiliation()
+                val result = if (affiliation.success) {
+                    dhizukuBridge.logoutSecondaryUser()
+                } else {
+                    affiliation
+                }
+                if (!result.success) {
+                    runOnUiThread {
+                        Toast.makeText(
+                            this,
+                            getString(R.string.failed_generic, result.message),
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            }
+        }
+
+        if (!dhizukuBridge.init()) {
+            Toast.makeText(this, "Dhizuku unavailable", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        if (dhizukuBridge.isPermissionGranted()) {
+            logoutNow()
+        } else {
+            dhizukuBridge.requestPermission { granted, message ->
+                runOnUiThread {
+                    if (granted) logoutNow()
+                    else Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
     private fun showAppList() {
         binding.layoutAppList.isVisible = true
         binding.layoutSettings.isVisible = false
@@ -596,6 +728,7 @@ class MainActivity : AppCompatActivity() {
             wsRepo   = WorkspaceRepository(shell)
             isInitialized = true
             updateAllWorkspaceStatuses()
+            if (!isSecondaryRuntimeUser) ensureDeviceOwnerAffiliation()
         } catch (e: Exception) {
             Toast.makeText(this, getString(R.string.error_initializing, e.message ?: ""), Toast.LENGTH_LONG).show()
         }
@@ -606,10 +739,56 @@ class MainActivity : AppCompatActivity() {
     // ════════════════════════════════════════════════════════════════════════
 
     private fun initializeExecution() {
+        if (isSecondaryRuntimeUser) {
+            initializeSecondaryUserMode()
+            return
+        }
+
         if (Prefs.useRoot(this)) {
             initRootShellAndUpdate()
         } else {
             checkShizukuAndInitialize()
+        }
+    }
+
+    private fun initializeSecondaryUserMode() {
+        // A full secondary user has its own app data and launcher context. AppDual does
+        // not need shell access merely to list and launch apps in that same user.
+        if (!dhizukuBridge.init()) {
+            binding.tvSecondaryUserStatus.text =
+                "Dual user $runtimeUserId · Dhizuku unavailable"
+            return
+        }
+
+        if (dhizukuBridge.isPermissionGranted()) {
+            completeSecondaryUserDhizukuSetup()
+            return
+        }
+
+        binding.tvSecondaryUserStatus.text =
+            getString(R.string.secondary_user_status_needs_dhizuku, runtimeUserId)
+        dhizukuBridge.requestPermission { granted, message ->
+            runOnUiThread {
+                if (granted) {
+                    completeSecondaryUserDhizukuSetup()
+                } else {
+                    binding.tvSecondaryUserStatus.text =
+                        "Dual user $runtimeUserId · $message"
+                }
+            }
+        }
+    }
+
+    private fun completeSecondaryUserDhizukuSetup() {
+        runBg {
+            val result = dhizukuBridge.ensureAffiliation()
+            runOnUiThread {
+                binding.tvSecondaryUserStatus.text = if (result.success) {
+                    getString(R.string.secondary_user_status_affiliated, runtimeUserId)
+                } else {
+                    "Dual user $runtimeUserId · ${result.message}"
+                }
+            }
         }
     }
 
@@ -630,6 +809,7 @@ class MainActivity : AppCompatActivity() {
                     wsRepo = WorkspaceRepository(shell)
                     isInitialized = true
                     updateAllWorkspaceStatuses()
+                    if (!isSecondaryRuntimeUser) ensureDeviceOwnerAffiliation()
                 } catch (e: Exception) {
                     Toast.makeText(this, getString(R.string.error_initializing, e.message ?: ""), Toast.LENGTH_LONG).show()
                 }
@@ -786,15 +966,25 @@ class MainActivity : AppCompatActivity() {
     private val workspaceNameCharset = Regex("^[\\p{L}\\p{N} _.-]+$")
 
     private fun promptCreateWorkspaceName(type: String) {
-        val prefix = if (type == "clone") "Clone" else "Work"
+        val prefix = when (type) {
+            "clone" -> "Clone"
+            "dhizuku" -> "Dual"
+            else -> "Work"
+        }
         val suggested = wsRepo.suggestName(cachedWorkspaces, prefix)
 
         val dialogBinding = DialogWorkspaceNameBinding.inflate(layoutInflater)
         dialogBinding.etWorkspaceName.setText(suggested)
         dialogBinding.etWorkspaceName.text?.let { dialogBinding.etWorkspaceName.setSelection(it.length) }
 
+        val titleRes = when (type) {
+            "clone" -> R.string.create_clone_workspace_dialog_title
+            "dhizuku" -> R.string.create_dhizuku_user_dialog_title
+            else -> R.string.create_workspace_dialog_title
+        }
+
         val dialog = MaterialAlertDialogBuilder(this)
-            .setTitle(if (type == "clone") R.string.create_clone_workspace_dialog_title else R.string.create_workspace_dialog_title)
+            .setTitle(titleRes)
             .setView(dialogBinding.root)
             .setPositiveButton(R.string.create, null)
             .setNegativeButton(R.string.cancel, null)
@@ -822,15 +1012,24 @@ class MainActivity : AppCompatActivity() {
         else -> null
     }
 
+    private fun setWorkspaceCreationButtonsEnabled(enabled: Boolean) {
+        binding.btnCreateWorkspace.isEnabled = enabled
+        binding.btnCreateCloneWorkspace.isEnabled = enabled
+        binding.btnCreateDhizukuUser.isEnabled = enabled
+    }
+
     private fun doCreateWorkspace(name: String, type: String) {
-        binding.btnCreateWorkspace.isEnabled = false
-        binding.btnCreateCloneWorkspace.isEnabled = false
+        if (type == "dhizuku") {
+            doCreateDhizukuUser(name)
+            return
+        }
+
+        setWorkspaceCreationButtonsEnabled(false)
         Toast.makeText(this, getString(R.string.creating_workspace_toast, name), Toast.LENGTH_SHORT).show()
 
         wsRepo.createWorkspace(name, type) { success, userId, output ->
             runOnUiThread {
-                binding.btnCreateWorkspace.isEnabled = true
-                binding.btnCreateCloneWorkspace.isEnabled = true
+                setWorkspaceCreationButtonsEnabled(true)
                 if (success) {
                     // Auto-start new workspace so it's immediately usable
                     wsRepo.startWorkspace(userId) { _, _ ->
@@ -844,6 +1043,61 @@ class MainActivity : AppCompatActivity() {
                     Toast.makeText(this, getString(R.string.failed_to_create_workspace, output), Toast.LENGTH_LONG).show()
                 }
             }
+        }
+    }
+
+    private fun doCreateDhizukuUser(name: String) {
+        setWorkspaceCreationButtonsEnabled(false)
+        Toast.makeText(this, getString(R.string.creating_workspace_toast, name), Toast.LENGTH_SHORT).show()
+
+        fun fail(message: String) {
+            runOnUiThread {
+                setWorkspaceCreationButtonsEnabled(true)
+                Toast.makeText(
+                    this,
+                    getString(R.string.failed_to_create_workspace, message),
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+
+        fun createNow() {
+            bg.execute {
+                val result = dhizukuBridge.createManagedSecondaryUser(name)
+                runOnUiThread {
+                    setWorkspaceCreationButtonsEnabled(true)
+                    if (result.success) {
+                        Toast.makeText(
+                            this,
+                            getString(R.string.dhizuku_user_created_toast, name, result.userId),
+                            Toast.LENGTH_LONG
+                        ).show()
+                        loadWorkspaces()
+                        updateAllWorkspaceStatuses()
+                    } else {
+                        Toast.makeText(
+                            this,
+                            getString(R.string.failed_to_create_workspace, result.message),
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            }
+        }
+
+        if (!dhizukuBridge.init()) {
+            fail("Dhizuku is not available or is not active")
+            return
+        }
+
+        if (dhizukuBridge.isPermissionGranted()) {
+            createNow()
+            return
+        }
+
+        Toast.makeText(this, R.string.dhizuku_permission_required, Toast.LENGTH_LONG).show()
+        dhizukuBridge.requestPermission { granted, message ->
+            if (granted) createNow() else fail(message)
         }
     }
 
@@ -902,6 +1156,208 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun confirmSwitchWorkspace(ws: WorkspaceInfo) {
+        if (!requireShellOrToast()) return
+        if (!ws.isFullUser) {
+            Toast.makeText(this, R.string.switch_user_unsupported, Toast.LENGTH_LONG).show()
+            return
+        }
+
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.switch_user_title)
+            .setMessage(getString(R.string.switch_user_message, ws.displayName, ws.userId))
+            .setPositiveButton(R.string.switch_user) { _, _ -> doSwitchWorkspace(ws) }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    private fun doSwitchWorkspace(ws: WorkspaceInfo) {
+        Toast.makeText(
+            this,
+            getString(R.string.switching_user, ws.displayName),
+            Toast.LENGTH_SHORT
+        ).show()
+
+        fun installPortalAndSwitch() {
+            // Keep AppDual itself present in the managed full user so the local launcher
+            // and Return button are available there. install-existing is idempotent.
+            wsRepo.installToWorkspace(ws.userId, packageName) { _, _ ->
+                val portalComponent = android.content.ComponentName(
+                    this,
+                    MainActivity::class.java
+                ).flattenToShortString()
+
+                // Land directly in the secondary-user AppDual portal rather than leaving
+                // the user at an arbitrary previous task/home screen.
+                wsRepo.switchAndLaunch(ws.userId, portalComponent) { success, output ->
+                    if (!success) {
+                        runOnUiThread {
+                            Toast.makeText(
+                                this,
+                                getString(R.string.failed_generic, output),
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    }
+                }
+            }
+        }
+
+        if (ws.isRunning) {
+            installPortalAndSwitch()
+        } else {
+            wsRepo.startWorkspace(ws.userId) { success, output ->
+                if (success) installPortalAndSwitch()
+                else runOnUiThread {
+                    Toast.makeText(
+                        this,
+                        getString(R.string.failed_generic, output),
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
+    }
+
+    private fun exportWorkspaceApps(ws: WorkspaceInfo) {
+        if (!requireShellOrToast()) return
+
+        wsRepo.getUserInstalledPackages(ws.userId) { packages ->
+            val safeName = ws.displayName
+                .replace(Regex("""[^A-Za-z0-9._-]+"""), "_")
+                .trim('_')
+                .ifBlank { "user${ws.userId}" }
+            val defaultName = PackageListIO.defaultFileName()
+                .replace("AppDual_export", "AppDual_${safeName}_user${ws.userId}")
+
+            runOnUiThread {
+                pendingExportJson = PackageListIO.serialize(packages.sorted())
+                pendingExportCount = packages.size
+                pendingExportWorkspaceLabel = ws.displayName
+                exportDocumentLauncher.launch(defaultName)
+            }
+        }
+    }
+
+    private fun beginImportWorkspaceApps(ws: WorkspaceInfo) {
+        if (!requireShellOrToast()) return
+        pendingWorkspaceImport = ws
+        workspaceImportDocumentLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
+    }
+
+    private fun readWorkspaceImportFromUri(uri: Uri, ws: WorkspaceInfo) {
+        runBg {
+            try {
+                val text = contentResolver.openInputStream(uri)?.use {
+                    it.bufferedReader().readText()
+                } ?: throw IllegalStateException("openInputStream returned null")
+
+                val packages = PackageListIO.deserialize(text)
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() }
+                    .distinct()
+
+                runOnUiThread {
+                    MaterialAlertDialogBuilder(this)
+                        .setTitle(getString(R.string.import_user_apps_title, ws.displayName))
+                        .setMessage(
+                            getString(
+                                R.string.import_user_apps_confirm,
+                                packages.size,
+                                ws.displayName
+                            )
+                        )
+                        .setPositiveButton(R.string.import_apps) { _, _ ->
+                            performWorkspaceImport(ws, packages)
+                        }
+                        .setNegativeButton(R.string.cancel, null)
+                        .show()
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    Toast.makeText(
+                        this,
+                        getString(R.string.batch_import_failed, e.message ?: ""),
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
+    }
+
+    private fun performWorkspaceImport(ws: WorkspaceInfo, packages: List<String>) {
+        if (packages.isEmpty()) {
+            Toast.makeText(
+                this,
+                getString(R.string.import_user_apps_done, 0, 0, 0),
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+
+        Toast.makeText(
+            this,
+            getString(R.string.import_user_apps_working, ws.displayName),
+            Toast.LENGTH_SHORT
+        ).show()
+
+        fun collectAndRun() {
+            wsRepo.getInstalledPackages(ws.userId) { current ->
+                val already = packages.count { it in current }
+                val jobs = packages.filterNot { it in current }
+                runWorkspaceImportJobs(ws, jobs, 0, installed = 0, failed = 0, already = already)
+            }
+        }
+
+        if (ws.isRunning) {
+            collectAndRun()
+        } else {
+            wsRepo.startWorkspace(ws.userId) { success, output ->
+                if (success) collectAndRun()
+                else runOnUiThread {
+                    Toast.makeText(
+                        this,
+                        getString(R.string.failed_generic, output),
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
+    }
+
+    private fun runWorkspaceImportJobs(
+        ws: WorkspaceInfo,
+        jobs: List<String>,
+        index: Int,
+        installed: Int,
+        failed: Int,
+        already: Int
+    ) {
+        if (index >= jobs.size) {
+            runOnUiThread {
+                Toast.makeText(
+                    this,
+                    getString(R.string.import_user_apps_done, installed, already, failed),
+                    Toast.LENGTH_LONG
+                ).show()
+                loadWorkspaces()
+                updateAllWorkspaceStatuses()
+            }
+            return
+        }
+
+        wsRepo.installToWorkspace(ws.userId, jobs[index]) { success, _ ->
+            runWorkspaceImportJobs(
+                ws = ws,
+                jobs = jobs,
+                index = index + 1,
+                installed = installed + if (success) 1 else 0,
+                failed = failed + if (success) 0 else 1,
+                already = already
+            )
+        }
+    }
+
     // ════════════════════════════════════════════════════════════════════════
     //  App launch / info helpers
     // ════════════════════════════════════════════════════════════════════════
@@ -913,14 +1369,54 @@ class MainActivity : AppCompatActivity() {
 
     private fun launchApp(userId: Int, packageName: String) {
         if (!requireShellOrToast()) return
-        val component = getLauncherComponent(packageName)
-        if (component == null) {
-            Toast.makeText(this, getString(R.string.no_launcher_found), Toast.LENGTH_SHORT).show()
+
+        if (userId == 0) {
+            val component = getLauncherComponent(packageName)
+            if (component == null) {
+                Toast.makeText(this, getString(R.string.no_launcher_found), Toast.LENGTH_SHORT).show()
+                return
+            }
+            wsRepo.launchInWorkspace(userId, component) { success, output ->
+                runOnUiThread {
+                    if (!success) {
+                        Toast.makeText(
+                            this,
+                            getString(R.string.launch_failed, output),
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            }
             return
         }
-        wsRepo.launchInWorkspace(userId, component) { success, output ->
-            runOnUiThread {
-                if (!success) Toast.makeText(this, getString(R.string.launch_failed, output), Toast.LENGTH_LONG).show()
+
+        val workspace = cachedWorkspaces.firstOrNull { it.userId == userId }
+        wsRepo.resolveLauncherComponent(userId, packageName) { component ->
+            if (component == null) {
+                runOnUiThread {
+                    Toast.makeText(this, R.string.no_launcher_found, Toast.LENGTH_SHORT).show()
+                }
+                return@resolveLauncherComponent
+            }
+
+            val callback: (Boolean, String) -> Unit = { success, output ->
+                if (!success) {
+                    runOnUiThread {
+                        Toast.makeText(
+                            this,
+                            getString(R.string.launch_failed, output),
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            }
+
+            if (workspace?.isFullUser == true) {
+                // A full secondary user's Activity cannot be visible while user 0 is
+                // foreground, so make the user foreground first and then launch.
+                wsRepo.switchAndLaunch(userId, component, callback)
+            } else {
+                wsRepo.launchInWorkspace(userId, component, callback)
             }
         }
     }
@@ -1046,7 +1542,8 @@ class MainActivity : AppCompatActivity() {
                 btnWsInstallToggle.setIconResource(
                     if (installed) android.R.drawable.ic_menu_delete else android.R.drawable.ic_input_add
                 )
-                btnWsLaunch.isEnabled = installed && running
+                btnWsLaunch.isEnabled = installed && (running || ws.isFullUser)
+                btnWsPin.isEnabled = installed && ws.isFullUser
                 btnWsAppInfo.isEnabled = installed
             }
         }
@@ -1088,6 +1585,30 @@ class MainActivity : AppCompatActivity() {
         row.btnWsLaunch.setOnClickListener {
             dialog.dismiss()
             launchApp(ws.userId, item.packageName)
+        }
+
+        row.btnWsPin.setOnClickListener {
+            if (!WorkspaceShortcutManager.isSupported(this)) {
+                Toast.makeText(this, R.string.pin_shortcut_unsupported, Toast.LENGTH_LONG).show()
+                return@setOnClickListener
+            }
+
+            wsRepo.resolveLauncherComponent(ws.userId, item.packageName) { component ->
+                runOnUiThread {
+                    if (component == null) {
+                        Toast.makeText(this, R.string.no_launcher_found, Toast.LENGTH_SHORT).show()
+                        return@runOnUiThread
+                    }
+
+                    val ok = WorkspaceShortcutManager.pin(this, ws, item, component)
+                    val message = if (ok) {
+                        getString(R.string.pin_shortcut_requested, item.label, ws.displayName)
+                    } else {
+                        getString(R.string.pin_shortcut_failed, item.label)
+                    }
+                    Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+                }
+            }
         }
 
         row.btnWsAppInfo.setOnClickListener {
@@ -1451,6 +1972,7 @@ class MainActivity : AppCompatActivity() {
                 val name = if (typed.isNullOrBlank()) PackageListIO.defaultFileName() else typed
                 pendingExportJson = PackageListIO.serialize(selected)
                 pendingExportCount = selected.size
+                pendingExportWorkspaceLabel = null
                 exportDocumentLauncher.launch(name)
             }
             .setNegativeButton(R.string.cancel, null)
@@ -1460,7 +1982,9 @@ class MainActivity : AppCompatActivity() {
     private fun writeExportToUri(uri: Uri) {
         val json = pendingExportJson
         val count = pendingExportCount
+        val workspaceLabel = pendingExportWorkspaceLabel
         pendingExportJson = null
+        pendingExportWorkspaceLabel = null
         if (json == null) return
 
         runBg {
@@ -1469,7 +1993,12 @@ class MainActivity : AppCompatActivity() {
                     ?: throw IllegalStateException("openOutputStream returned null")
                 stream.use { it.write(json.toByteArray(Charsets.UTF_8)) }
                 runOnUiThread {
-                    Toast.makeText(this, getString(R.string.batch_export_success, count), Toast.LENGTH_SHORT).show()
+                    val message = if (workspaceLabel != null) {
+                        getString(R.string.export_user_apps_done, count, workspaceLabel)
+                    } else {
+                        getString(R.string.batch_export_success, count)
+                    }
+                    Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
                     batchDialog?.dismiss()
                 }
             } catch (e: Exception) {

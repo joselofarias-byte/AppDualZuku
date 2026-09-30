@@ -65,6 +65,17 @@
         <Space android:layout_width="6dp" android:layout_height="1dp" />
 
         <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnWsPin"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/pin"
+            app:icon="@android:drawable/ic_menu_add"
+            style="@style/Widget.Material3.Button.TonalButton" />
+
+        <Space android:layout_width="6dp" android:layout_height="1dp" />
+
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/btnWsAppInfo"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
