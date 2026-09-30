@@ -75,6 +75,7 @@ class MainActivity : AppCompatActivity() {
     private var batchDialog: BottomSheetDialog? = null
     private var pendingExportJson: String? = null
     private var pendingExportCount: Int = 0
+    private var pendingWorkspaceImport: WorkspaceInfo? = null
 
     // Must be registered during construction (before onCreate), per ComponentActivity contract.
     private val exportDocumentLauncher = registerForActivityResult(
@@ -84,6 +85,14 @@ class MainActivity : AppCompatActivity() {
     private val importDocumentLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri -> uri?.let { readImportFromUri(it) } }
+
+    private val workspaceImportDocumentLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        val workspace = pendingWorkspaceImport
+        pendingWorkspaceImport = null
+        if (uri != null && workspace != null) readWorkspaceImportFromUri(uri, workspace)
+    }
 
     companion object {
         private const val REQUEST_SHIZUKU_PERMISSION = 1234
@@ -326,6 +335,9 @@ class MainActivity : AppCompatActivity() {
         wsAdapter = WorkspaceAdapter(
             onStart  = { ws -> doStartWorkspace(ws) },
             onStop   = { ws -> doStopWorkspace(ws) },
+            onSwitch = { ws -> confirmSwitchWorkspace(ws) },
+            onExport = { ws -> exportWorkspaceApps(ws) },
+            onImport = { ws -> beginImportWorkspaceApps(ws) },
             onRemove = { ws -> confirmRemoveWorkspace(ws) }
         )
         binding.rvWorkspaces.layoutManager = LinearLayoutManager(this)
