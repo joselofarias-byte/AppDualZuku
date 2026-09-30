@@ -143,7 +143,6 @@ class MainActivity : AppCompatActivity() {
         repo = AppRepository(this)
         loadAppsUser0()
         initializeExecution()
-        if (!isSecondaryRuntimeUser) ensureDeviceOwnerAffiliation()
     }
 
     private fun ensureDeviceOwnerAffiliation() {
@@ -729,6 +728,7 @@ class MainActivity : AppCompatActivity() {
             wsRepo   = WorkspaceRepository(shell)
             isInitialized = true
             updateAllWorkspaceStatuses()
+            if (!isSecondaryRuntimeUser) ensureDeviceOwnerAffiliation()
         } catch (e: Exception) {
             Toast.makeText(this, getString(R.string.error_initializing, e.message ?: ""), Toast.LENGTH_LONG).show()
         }
@@ -809,6 +809,7 @@ class MainActivity : AppCompatActivity() {
                     wsRepo = WorkspaceRepository(shell)
                     isInitialized = true
                     updateAllWorkspaceStatuses()
+                    if (!isSecondaryRuntimeUser) ensureDeviceOwnerAffiliation()
                 } catch (e: Exception) {
                     Toast.makeText(this, getString(R.string.error_initializing, e.message ?: ""), Toast.LENGTH_LONG).show()
                 }
