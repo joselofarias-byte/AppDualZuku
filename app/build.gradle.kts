@@ -51,10 +51,10 @@ android {
 
     buildTypes {
         debug {
-            // Physical-test APK must coexist with the installed AppDual v1.5 even
-            // when that build uses a different signing key.
-            applicationIdSuffix = ".dhizukutest"
-            versionNameSuffix = "-dhizukutest"
+            // v2 physical-test package coexists with both AppDual v1.5 and the first
+            // one-off dhizukutest build, whose ephemeral CI debug key cannot be reused.
+            applicationIdSuffix = ".dhizukutest2"
+            versionNameSuffix = "-dhizukutest2"
         }
         release {
             isMinifyEnabled = false
