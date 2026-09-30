@@ -108,10 +108,22 @@ internal class DhizukuDeviceOwnerBridge(context: Context) {
                 dpm.startUserInBackground(admin, user)
             }.getOrElse { -1 }
 
+            val userId = runCatching {
+                user.javaClass.getMethod("getIdentifier").invoke(user) as Int
+            }.getOrElse {
+                // UserHandle.toString() is normally "UserHandle{N}"; keep this as a
+                // defensive fallback for OEM stubs that hide getIdentifier at compile time.
+                Regex("""\\d+""").find(user.toString())?.value?.toIntOrNull() ?: -1
+            }
+
             CreateResult(
-                true,
-                user.identifier,
-                "Created managed secondary user ${user.identifier}; startUserInBackground=$startResult"
+                userId >= 0,
+                userId,
+                if (userId >= 0) {
+                    "Created managed secondary user $userId; startUserInBackground=$startResult"
+                } else {
+                    "User created, but AppDual could not resolve its userId"
+                }
             )
         } catch (t: Throwable) {
             CreateResult(
