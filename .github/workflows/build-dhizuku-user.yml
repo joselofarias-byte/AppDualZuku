@@ -5,9 +5,6 @@ on:
   push:
     branches:
       - chatgpt/dhizuku-managed-user-20260930
-  pull_request:
-    branches:
-      - master
 
 jobs:
   build:
@@ -24,6 +21,12 @@ jobs:
           java-version: "21"
           cache: gradle
 
+      - name: Restore stable physical-test signing key
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: appdual-dhizukutest2-debug-keystore-v1
+
       - name: Build debug APK
         run: |
           chmod +x gradlew
@@ -32,6 +35,6 @@ jobs:
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: AppDual-Dhizuku-managed-user-debug
+          name: AppDual-Dhizuku-managed-user-v2-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
