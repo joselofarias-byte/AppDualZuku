@@ -21,9 +21,12 @@
     <string name="workspaces_notice"><b>Managed:</b> Traditional work profiles (isolated settings/store/storage/etc.). \n<b>Cloned:</b> Lightweight profiles optimized for Dual Apps (Shared, May not work in some devices).</string>
     <string name="create_workspace">Managed</string>
     <string name="create_clone_workspace">Cloned</string>
+    <string name="create_dhizuku_user">Dhizuku User</string>
+    <string name="create_dhizuku_user_hint">Keeps Dhizuku as Device Owner and creates a full managed secondary user through DevicePolicyManager.</string>
     <string name="refresh">Refresh</string>
     <string name="create_workspace_dialog_title">New Managed Workspace</string>
     <string name="create_clone_workspace_dialog_title">New Cloned Workspace</string>
+    <string name="create_dhizuku_user_dialog_title">New Dhizuku Managed User</string>
     <string name="workspace_name_hint">Workspace name</string>
     <string name="create">Create</string>
     <string name="workspace_name_empty_error">Name can\'t be empty</string>
@@ -99,6 +102,8 @@
     <string name="error_loading_apps">Error loading apps: %1$s</string>
     <string name="creating_workspace_toast">Creating workspace \"%1$s\"…</string>
     <string name="workspace_created_toast">Workspace \"%1$s\" created (User %2$d)</string>
+    <string name="dhizuku_user_created_toast">Dhizuku managed user \"%1$s\" created (User %2$d)</string>
+    <string name="dhizuku_permission_required">Grant AppDual access in Dhizuku to create the managed user.</string>
     <string name="failed_to_create_workspace">Failed to create workspace: %1$s</string>
     <string name="removing_workspace_toast">Removing workspace \"%1$s\"…</string>
     <string name="workspace_removed_toast">Workspace removed</string>
