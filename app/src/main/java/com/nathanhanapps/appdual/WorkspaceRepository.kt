@@ -2,6 +2,8 @@ package com.nathanhanapps.appdual
 
 class WorkspaceRepository(private val shell: IShellExecutor) {
 
+    private val safePackageName = Regex("""^[A-Za-z0-9_.$-]+$""")
+
     fun listWorkspaces(callback: (List<WorkspaceInfo>) -> Unit) {
         shell.execWhenReady("pm list users") { output ->
             callback(WorkspaceParsers.parseUsers(output))
@@ -83,6 +85,10 @@ class WorkspaceRepository(private val shell: IShellExecutor) {
     }
 
     fun resolveLauncherComponent(userId: Int, packageName: String, callback: (String?) -> Unit) {
+        if (!safePackageName.matches(packageName)) {
+            callback(null)
+            return
+        }
         val cmd = "cmd package resolve-activity --user $userId --brief " +
             "-a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p $packageName"
         shell.execWhenReady(cmd) { out ->
@@ -95,6 +101,10 @@ class WorkspaceRepository(private val shell: IShellExecutor) {
     }
 
     fun installToWorkspace(userId: Int, packageName: String, callback: (Boolean, String) -> Unit) {
+        if (!safePackageName.matches(packageName)) {
+            callback(false, "Invalid package name")
+            return
+        }
         shell.execWhenReady("pm install-existing --user $userId $packageName") { out ->
             val ok = out.contains("Package", ignoreCase = true) &&
                     out.contains("installed", ignoreCase = true)
