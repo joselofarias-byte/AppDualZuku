@@ -75,6 +75,7 @@ class MainActivity : AppCompatActivity() {
     private var batchDialog: BottomSheetDialog? = null
     private var pendingExportJson: String? = null
     private var pendingExportCount: Int = 0
+    private var pendingExportWorkspaceLabel: String? = null
     private var pendingWorkspaceImport: WorkspaceInfo? = null
 
     // Must be registered during construction (before onCreate), per ComponentActivity contract.
@@ -1207,6 +1208,7 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 pendingExportJson = PackageListIO.serialize(packages.sorted())
                 pendingExportCount = packages.size
+                pendingExportWorkspaceLabel = ws.displayName
                 exportDocumentLauncher.launch(defaultName)
             }
         }
@@ -1945,6 +1947,7 @@ class MainActivity : AppCompatActivity() {
                 val name = if (typed.isNullOrBlank()) PackageListIO.defaultFileName() else typed
                 pendingExportJson = PackageListIO.serialize(selected)
                 pendingExportCount = selected.size
+                pendingExportWorkspaceLabel = null
                 exportDocumentLauncher.launch(name)
             }
             .setNegativeButton(R.string.cancel, null)
@@ -1954,7 +1957,9 @@ class MainActivity : AppCompatActivity() {
     private fun writeExportToUri(uri: Uri) {
         val json = pendingExportJson
         val count = pendingExportCount
+        val workspaceLabel = pendingExportWorkspaceLabel
         pendingExportJson = null
+        pendingExportWorkspaceLabel = null
         if (json == null) return
 
         runBg {
@@ -1963,7 +1968,12 @@ class MainActivity : AppCompatActivity() {
                     ?: throw IllegalStateException("openOutputStream returned null")
                 stream.use { it.write(json.toByteArray(Charsets.UTF_8)) }
                 runOnUiThread {
-                    Toast.makeText(this, getString(R.string.batch_export_success, count), Toast.LENGTH_SHORT).show()
+                    val message = if (workspaceLabel != null) {
+                        getString(R.string.export_user_apps_done, count, workspaceLabel)
+                    } else {
+                        getString(R.string.batch_export_success, count)
+                    }
+                    Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
                     batchDialog?.dismiss()
                 }
             } catch (e: Exception) {
