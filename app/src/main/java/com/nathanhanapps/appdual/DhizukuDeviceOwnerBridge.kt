@@ -23,6 +23,10 @@ import org.lsposed.hiddenapibypass.HiddenApiBypass
  */
 internal class DhizukuDeviceOwnerBridge(context: Context) {
 
+    companion object {
+        private const val AFFILIATION_ID = "appdual-managed-secondary-v1"
+    }
+
     data class CreateResult(
         val success: Boolean,
         val userId: Int = -1,
@@ -64,6 +68,62 @@ internal class DhizukuDeviceOwnerBridge(context: Context) {
         }
     }
 
+
+    fun currentUserId(): Int = android.os.Process.myUid() / 100000
+
+    fun isCurrentUserProfileOwner(): Boolean {
+        val admin = runCatching { Dhizuku.getOwnerComponent() }.getOrNull() ?: return false
+        val dpm = appContext.getSystemService(DevicePolicyManager::class.java)
+        return runCatching { dpm.isProfileOwnerApp(admin.packageName) }.getOrDefault(false)
+    }
+
+    /**
+     * Affiliates the current owner user with the Device Owner using a stable opaque id.
+     * Android grants managed secondary-user Profile Owners additional capabilities only
+     * after the affiliation id intersects the Device Owner's affiliation ids.
+     */
+    fun ensureAffiliation(): CreateResult {
+        if (!init()) return CreateResult(false, message = "Dhizuku is not available or is not active")
+        if (!isPermissionGranted()) return CreateResult(false, message = "Dhizuku permission is required")
+
+        val admin = runCatching { Dhizuku.getOwnerComponent() }.getOrNull()
+            ?: return CreateResult(false, message = "Dhizuku reported no owner component")
+        val dpm = getRoutedDpm(admin)
+            ?: return CreateResult(false, message = "Could not route DevicePolicyManager through Dhizuku")
+
+        return try {
+            dpm.setAffiliationIds(admin, setOf(AFFILIATION_ID))
+            CreateResult(true, currentUserId(), "Affiliation configured")
+        } catch (t: Throwable) {
+            CreateResult(false, currentUserId(), "${t.javaClass.simpleName}: ${t.message ?: "unknown error"}")
+        }
+    }
+
+    /**
+     * From an affiliated managed secondary user, logoutUser() stops/suspends the calling
+     * user as appropriate and returns to the primary user selected by Android.
+     */
+    fun logoutSecondaryUser(): CreateResult {
+        if (!init()) return CreateResult(false, message = "Dhizuku is not available or is not active")
+        if (!isPermissionGranted()) return CreateResult(false, message = "Dhizuku permission is required")
+
+        val admin = runCatching { Dhizuku.getOwnerComponent() }.getOrNull()
+            ?: return CreateResult(false, message = "Dhizuku reported no owner component")
+        val dpm = getRoutedDpm(admin)
+            ?: return CreateResult(false, message = "Could not route DevicePolicyManager through Dhizuku")
+
+        return try {
+            val result = dpm.logoutUser(admin)
+            CreateResult(
+                result == android.os.UserManager.USER_OPERATION_SUCCESS,
+                currentUserId(),
+                "logoutUser result=$result"
+            )
+        } catch (t: Throwable) {
+            CreateResult(false, currentUserId(), "${t.javaClass.simpleName}: ${t.message ?: "unknown error"}")
+        }
+    }
+
     fun createManagedSecondaryUser(name: String): CreateResult {
         val safeName = name.replace("\"", "").trim()
         if (safeName.isBlank()) return CreateResult(false, message = "User name is empty")
@@ -89,6 +149,10 @@ internal class DhizukuDeviceOwnerBridge(context: Context) {
         return try {
             val dpm = getRoutedDpm(admin)
                 ?: return CreateResult(false, message = "Could not route DevicePolicyManager through Dhizuku")
+
+            // Set the Device Owner side first. The managed secondary user's Profile
+            // Owner will set the same id on first launch, completing affiliation.
+            runCatching { dpm.setAffiliationIds(admin, setOf(AFFILIATION_ID)) }
 
             val flags = DevicePolicyManager.SKIP_SETUP_WIZARD or
                 DevicePolicyManager.LEAVE_ALL_SYSTEM_APPS_ENABLED
