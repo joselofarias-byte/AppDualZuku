@@ -1130,6 +1130,196 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun confirmSwitchWorkspace(ws: WorkspaceInfo) {
+        if (!requireShellOrToast()) return
+        if (!ws.isFullUser) {
+            Toast.makeText(this, R.string.switch_user_unsupported, Toast.LENGTH_LONG).show()
+            return
+        }
+
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.switch_user_title)
+            .setMessage(getString(R.string.switch_user_message, ws.displayName, ws.userId))
+            .setPositiveButton(R.string.switch_user) { _, _ -> doSwitchWorkspace(ws) }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    private fun doSwitchWorkspace(ws: WorkspaceInfo) {
+        Toast.makeText(
+            this,
+            getString(R.string.switching_user, ws.displayName),
+            Toast.LENGTH_SHORT
+        ).show()
+
+        fun switchNow() {
+            wsRepo.switchUser(ws.userId) { success, output ->
+                if (!success) {
+                    runOnUiThread {
+                        Toast.makeText(
+                            this,
+                            getString(R.string.failed_generic, output),
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            }
+        }
+
+        if (ws.isRunning) {
+            switchNow()
+        } else {
+            wsRepo.startWorkspace(ws.userId) { success, output ->
+                if (success) switchNow()
+                else runOnUiThread {
+                    Toast.makeText(
+                        this,
+                        getString(R.string.failed_generic, output),
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
+    }
+
+    private fun exportWorkspaceApps(ws: WorkspaceInfo) {
+        if (!requireShellOrToast()) return
+
+        wsRepo.getUserInstalledPackages(ws.userId) { packages ->
+            val safeName = ws.displayName
+                .replace(Regex("""[^A-Za-z0-9._-]+"""), "_")
+                .trim('_')
+                .ifBlank { "user${ws.userId}" }
+            val defaultName = PackageListIO.defaultFileName()
+                .replace("AppDual_export", "AppDual_${safeName}_user${ws.userId}")
+
+            runOnUiThread {
+                pendingExportJson = PackageListIO.serialize(packages.sorted())
+                pendingExportCount = packages.size
+                exportDocumentLauncher.launch(defaultName)
+            }
+        }
+    }
+
+    private fun beginImportWorkspaceApps(ws: WorkspaceInfo) {
+        if (!requireShellOrToast()) return
+        pendingWorkspaceImport = ws
+        workspaceImportDocumentLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
+    }
+
+    private fun readWorkspaceImportFromUri(uri: Uri, ws: WorkspaceInfo) {
+        runBg {
+            try {
+                val text = contentResolver.openInputStream(uri)?.use {
+                    it.bufferedReader().readText()
+                } ?: throw IllegalStateException("openInputStream returned null")
+
+                val packages = PackageListIO.deserialize(text)
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() }
+                    .distinct()
+
+                runOnUiThread {
+                    MaterialAlertDialogBuilder(this)
+                        .setTitle(getString(R.string.import_user_apps_title, ws.displayName))
+                        .setMessage(
+                            getString(
+                                R.string.import_user_apps_confirm,
+                                packages.size,
+                                ws.displayName
+                            )
+                        )
+                        .setPositiveButton(R.string.import_apps) { _, _ ->
+                            performWorkspaceImport(ws, packages)
+                        }
+                        .setNegativeButton(R.string.cancel, null)
+                        .show()
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    Toast.makeText(
+                        this,
+                        getString(R.string.batch_import_failed, e.message ?: ""),
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
+    }
+
+    private fun performWorkspaceImport(ws: WorkspaceInfo, packages: List<String>) {
+        if (packages.isEmpty()) {
+            Toast.makeText(
+                this,
+                getString(R.string.import_user_apps_done, 0, 0, 0),
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+
+        Toast.makeText(
+            this,
+            getString(R.string.import_user_apps_working, ws.displayName),
+            Toast.LENGTH_SHORT
+        ).show()
+
+        fun collectAndRun() {
+            wsRepo.getInstalledPackages(ws.userId) { current ->
+                val already = packages.count { it in current }
+                val jobs = packages.filterNot { it in current }
+                runWorkspaceImportJobs(ws, jobs, 0, installed = 0, failed = 0, already = already)
+            }
+        }
+
+        if (ws.isRunning) {
+            collectAndRun()
+        } else {
+            wsRepo.startWorkspace(ws.userId) { success, output ->
+                if (success) collectAndRun()
+                else runOnUiThread {
+                    Toast.makeText(
+                        this,
+                        getString(R.string.failed_generic, output),
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
+    }
+
+    private fun runWorkspaceImportJobs(
+        ws: WorkspaceInfo,
+        jobs: List<String>,
+        index: Int,
+        installed: Int,
+        failed: Int,
+        already: Int
+    ) {
+        if (index >= jobs.size) {
+            runOnUiThread {
+                Toast.makeText(
+                    this,
+                    getString(R.string.import_user_apps_done, installed, already, failed),
+                    Toast.LENGTH_LONG
+                ).show()
+                loadWorkspaces()
+                updateAllWorkspaceStatuses()
+            }
+            return
+        }
+
+        wsRepo.installToWorkspace(ws.userId, jobs[index]) { success, _ ->
+            runWorkspaceImportJobs(
+                ws = ws,
+                jobs = jobs,
+                index = index + 1,
+                installed = installed + if (success) 1 else 0,
+                failed = failed + if (success) 0 else 1,
+                already = already
+            )
+        }
+    }
+
     // ════════════════════════════════════════════════════════════════════════
     //  App launch / info helpers
     // ════════════════════════════════════════════════════════════════════════
@@ -1141,14 +1331,54 @@ class MainActivity : AppCompatActivity() {
 
     private fun launchApp(userId: Int, packageName: String) {
         if (!requireShellOrToast()) return
-        val component = getLauncherComponent(packageName)
-        if (component == null) {
-            Toast.makeText(this, getString(R.string.no_launcher_found), Toast.LENGTH_SHORT).show()
+
+        if (userId == 0) {
+            val component = getLauncherComponent(packageName)
+            if (component == null) {
+                Toast.makeText(this, getString(R.string.no_launcher_found), Toast.LENGTH_SHORT).show()
+                return
+            }
+            wsRepo.launchInWorkspace(userId, component) { success, output ->
+                runOnUiThread {
+                    if (!success) {
+                        Toast.makeText(
+                            this,
+                            getString(R.string.launch_failed, output),
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            }
             return
         }
-        wsRepo.launchInWorkspace(userId, component) { success, output ->
-            runOnUiThread {
-                if (!success) Toast.makeText(this, getString(R.string.launch_failed, output), Toast.LENGTH_LONG).show()
+
+        val workspace = cachedWorkspaces.firstOrNull { it.userId == userId }
+        wsRepo.resolveLauncherComponent(userId, packageName) { component ->
+            if (component == null) {
+                runOnUiThread {
+                    Toast.makeText(this, R.string.no_launcher_found, Toast.LENGTH_SHORT).show()
+                }
+                return@resolveLauncherComponent
+            }
+
+            val callback: (Boolean, String) -> Unit = { success, output ->
+                if (!success) {
+                    runOnUiThread {
+                        Toast.makeText(
+                            this,
+                            getString(R.string.launch_failed, output),
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            }
+
+            if (workspace?.isFullUser == true) {
+                // A full secondary user's Activity cannot be visible while user 0 is
+                // foreground, so make the user foreground first and then launch.
+                wsRepo.switchAndLaunch(userId, component, callback)
+            } else {
+                wsRepo.launchInWorkspace(userId, component, callback)
             }
         }
     }
