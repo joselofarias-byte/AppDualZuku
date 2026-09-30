@@ -22,6 +22,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".ShortcutProxyActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@style/Theme.AppDual" />
 <!--        <activity-->
 <!--            android:name=".SettingsActivity"-->
 <!--            android:label="Settings"-->
