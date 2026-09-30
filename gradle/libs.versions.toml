@@ -11,6 +11,8 @@ activity = "1.13.0"
 constraintlayout = "2.2.1"
 shizuku = "13.1.5"
 shimmer = "0.5.0"
+dhizukuApi = "2.6.0"
+hiddenApiBypass = "6.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -24,6 +26,8 @@ androidx-constraintlayout = { group = "androidx.constraintlayout", name = "const
 shimmer = { module = "com.facebook.shimmer:shimmer", version.ref = "shimmer" }
 shizuku-api = { module = "dev.rikka.shizuku:api", version.ref = "shizuku" }
 shizuku-provider = { module = "dev.rikka.shizuku:provider", version.ref = "shizuku" }
+dhizuku-api = { module = "io.github.iamr0s:Dhizuku-API", version.ref = "dhizukuApi" }
+hidden-api-bypass = { module = "org.lsposed.hiddenapibypass:hiddenapibypass", version.ref = "hiddenApiBypass" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
