@@ -142,6 +142,17 @@ class MainActivity : AppCompatActivity() {
         repo = AppRepository(this)
         loadAppsUser0()
         initializeExecution()
+        if (!isSecondaryRuntimeUser) ensureDeviceOwnerAffiliation()
+    }
+
+    private fun ensureDeviceOwnerAffiliation() {
+        runBg {
+            if (!dhizukuBridge.init() || !dhizukuBridge.isPermissionGranted()) return@runBg
+            // Best-effort and idempotent. Existing managed secondary users created by an
+            // older AppDual test build need the Device Owner side of the affiliation set
+            // before their Profile Owner can use logoutUser()/other affiliated-user APIs.
+            dhizukuBridge.ensureAffiliation()
+        }
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
