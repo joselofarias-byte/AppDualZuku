@@ -45,6 +45,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var shell:     IShellExecutor
     private lateinit var wsRepo:    WorkspaceRepository
     private lateinit var wsAdapter: WorkspaceAdapter
+    private lateinit var dhizukuBridge: DhizukuDeviceOwnerBridge
     private lateinit var binding:   ActivityMainBinding
 
     // ── State caches ─────────────────────────────────────────────────────────
@@ -117,6 +118,7 @@ class MainActivity : AppCompatActivity() {
 
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
+        dhizukuBridge = DhizukuDeviceOwnerBridge(this)
         setContentView(binding.root)
 
         applyStatusBarToMatchToolbar()
@@ -340,6 +342,16 @@ class MainActivity : AppCompatActivity() {
         }
         binding.btnCreateCloneWorkspace.setOnLongClickListener {
             if (requireShellOrToast()) promptCreateWorkspaceName("clone")
+            true
+        }
+
+        // ── Create a full secondary user through Dhizuku Device Owner ────────
+        binding.btnCreateDhizukuUser.setOnClickListener {
+            val name = wsRepo.suggestName(cachedWorkspaces, "Dual")
+            doCreateDhizukuUser(name)
+        }
+        binding.btnCreateDhizukuUser.setOnLongClickListener {
+            promptCreateWorkspaceName("dhizuku")
             true
         }
 
@@ -786,15 +798,25 @@ class MainActivity : AppCompatActivity() {
     private val workspaceNameCharset = Regex("^[\\p{L}\\p{N} _.-]+$")
 
     private fun promptCreateWorkspaceName(type: String) {
-        val prefix = if (type == "clone") "Clone" else "Work"
+        val prefix = when (type) {
+            "clone" -> "Clone"
+            "dhizuku" -> "Dual"
+            else -> "Work"
+        }
         val suggested = wsRepo.suggestName(cachedWorkspaces, prefix)
 
         val dialogBinding = DialogWorkspaceNameBinding.inflate(layoutInflater)
         dialogBinding.etWorkspaceName.setText(suggested)
         dialogBinding.etWorkspaceName.text?.let { dialogBinding.etWorkspaceName.setSelection(it.length) }
 
+        val titleRes = when (type) {
+            "clone" -> R.string.create_clone_workspace_dialog_title
+            "dhizuku" -> R.string.create_dhizuku_user_dialog_title
+            else -> R.string.create_workspace_dialog_title
+        }
+
         val dialog = MaterialAlertDialogBuilder(this)
-            .setTitle(if (type == "clone") R.string.create_clone_workspace_dialog_title else R.string.create_workspace_dialog_title)
+            .setTitle(titleRes)
             .setView(dialogBinding.root)
             .setPositiveButton(R.string.create, null)
             .setNegativeButton(R.string.cancel, null)
@@ -822,15 +844,24 @@ class MainActivity : AppCompatActivity() {
         else -> null
     }
 
+    private fun setWorkspaceCreationButtonsEnabled(enabled: Boolean) {
+        binding.btnCreateWorkspace.isEnabled = enabled
+        binding.btnCreateCloneWorkspace.isEnabled = enabled
+        binding.btnCreateDhizukuUser.isEnabled = enabled
+    }
+
     private fun doCreateWorkspace(name: String, type: String) {
-        binding.btnCreateWorkspace.isEnabled = false
-        binding.btnCreateCloneWorkspace.isEnabled = false
+        if (type == "dhizuku") {
+            doCreateDhizukuUser(name)
+            return
+        }
+
+        setWorkspaceCreationButtonsEnabled(false)
         Toast.makeText(this, getString(R.string.creating_workspace_toast, name), Toast.LENGTH_SHORT).show()
 
         wsRepo.createWorkspace(name, type) { success, userId, output ->
             runOnUiThread {
-                binding.btnCreateWorkspace.isEnabled = true
-                binding.btnCreateCloneWorkspace.isEnabled = true
+                setWorkspaceCreationButtonsEnabled(true)
                 if (success) {
                     // Auto-start new workspace so it's immediately usable
                     wsRepo.startWorkspace(userId) { _, _ ->
@@ -844,6 +875,61 @@ class MainActivity : AppCompatActivity() {
                     Toast.makeText(this, getString(R.string.failed_to_create_workspace, output), Toast.LENGTH_LONG).show()
                 }
             }
+        }
+    }
+
+    private fun doCreateDhizukuUser(name: String) {
+        setWorkspaceCreationButtonsEnabled(false)
+        Toast.makeText(this, getString(R.string.creating_workspace_toast, name), Toast.LENGTH_SHORT).show()
+
+        fun fail(message: String) {
+            runOnUiThread {
+                setWorkspaceCreationButtonsEnabled(true)
+                Toast.makeText(
+                    this,
+                    getString(R.string.failed_to_create_workspace, message),
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+
+        fun createNow() {
+            bg.execute {
+                val result = dhizukuBridge.createManagedSecondaryUser(name)
+                runOnUiThread {
+                    setWorkspaceCreationButtonsEnabled(true)
+                    if (result.success) {
+                        Toast.makeText(
+                            this,
+                            getString(R.string.dhizuku_user_created_toast, name, result.userId),
+                            Toast.LENGTH_LONG
+                        ).show()
+                        loadWorkspaces()
+                        updateAllWorkspaceStatuses()
+                    } else {
+                        Toast.makeText(
+                            this,
+                            getString(R.string.failed_to_create_workspace, result.message),
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            }
+        }
+
+        if (!dhizukuBridge.init()) {
+            fail("Dhizuku is not available or is not active")
+            return
+        }
+
+        if (dhizukuBridge.isPermissionGranted()) {
+            createNow()
+            return
+        }
+
+        Toast.makeText(this, R.string.dhizuku_permission_required, Toast.LENGTH_LONG).show()
+        dhizukuBridge.requestPermission { granted, message ->
+            if (granted) createNow() else fail(message)
         }
     }
 
