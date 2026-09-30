@@ -147,12 +147,25 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun ensureDeviceOwnerAffiliation() {
-        runBg {
-            if (!dhizukuBridge.init() || !dhizukuBridge.isPermissionGranted()) return@runBg
-            // Best-effort and idempotent. Existing managed secondary users created by an
-            // older AppDual test build need the Device Owner side of the affiliation set
-            // before their Profile Owner can use logoutUser()/other affiliated-user APIs.
-            dhizukuBridge.ensureAffiliation()
+        if (!dhizukuBridge.init()) return
+
+        fun configure() {
+            runBg {
+                // Idempotent. Existing managed secondary users created by an older test
+                // build need the Device Owner side before their Profile Owner can use
+                // logoutUser()/other affiliated-user APIs.
+                dhizukuBridge.ensureAffiliation()
+            }
+        }
+
+        if (dhizukuBridge.isPermissionGranted()) {
+            configure()
+        } else {
+            // The v2 test package has a fresh application id. Ask once on first launch so
+            // the already-created Dual1 user can be affiliated without recreating it.
+            dhizukuBridge.requestPermission { granted, _ ->
+                if (granted) configure()
+            }
         }
     }
 
