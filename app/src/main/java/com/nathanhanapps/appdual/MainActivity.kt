@@ -1504,7 +1504,8 @@ class MainActivity : AppCompatActivity() {
                 btnWsInstallToggle.setIconResource(
                     if (installed) android.R.drawable.ic_menu_delete else android.R.drawable.ic_input_add
                 )
-                btnWsLaunch.isEnabled = installed && running
+                btnWsLaunch.isEnabled = installed && (running || ws.isFullUser)
+                btnWsPin.isEnabled = installed && ws.isFullUser
                 btnWsAppInfo.isEnabled = installed
             }
         }
@@ -1546,6 +1547,30 @@ class MainActivity : AppCompatActivity() {
         row.btnWsLaunch.setOnClickListener {
             dialog.dismiss()
             launchApp(ws.userId, item.packageName)
+        }
+
+        row.btnWsPin.setOnClickListener {
+            if (!WorkspaceShortcutManager.isSupported(this)) {
+                Toast.makeText(this, R.string.pin_shortcut_unsupported, Toast.LENGTH_LONG).show()
+                return@setOnClickListener
+            }
+
+            wsRepo.resolveLauncherComponent(ws.userId, item.packageName) { component ->
+                runOnUiThread {
+                    if (component == null) {
+                        Toast.makeText(this, R.string.no_launcher_found, Toast.LENGTH_SHORT).show()
+                        return@runOnUiThread
+                    }
+
+                    val ok = WorkspaceShortcutManager.pin(this, ws, item, component)
+                    val message = if (ok) {
+                        getString(R.string.pin_shortcut_requested, item.label, ws.displayName)
+                    } else {
+                        getString(R.string.pin_shortcut_failed, item.label)
+                    }
+                    Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+                }
+            }
         }
 
         row.btnWsAppInfo.setOnClickListener {
