@@ -70,6 +70,18 @@ class WorkspaceRepository(private val shell: IShellExecutor) {
         }
     }
 
+    fun switchAndLaunch(userId: Int, component: String, callback: (Boolean, String) -> Unit) {
+        val cmd = "am start-user -w $userId >/dev/null 2>&1; " +
+            "am switch-user $userId >/dev/null 2>&1; sleep 1; " +
+            "am start --user $userId -n $component"
+        shell.execWhenReady(cmd) { out ->
+            val ok = !out.startsWith("ERROR:", ignoreCase = true) &&
+                !out.contains("Error:", ignoreCase = true) &&
+                !out.contains("failed", ignoreCase = true)
+            callback(ok, out)
+        }
+    }
+
     fun resolveLauncherComponent(userId: Int, packageName: String, callback: (String?) -> Unit) {
         val cmd = "cmd package resolve-activity --user $userId --brief " +
             "-a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p $packageName"
